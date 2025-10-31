@@ -1,137 +1,161 @@
 # app.py
 import streamlit as st
 import pandas as pd
+from datetime import datetime
 
-# -----------------------------
-# PAGE SETUP
-# -----------------------------
-st.set_page_config(page_title="Customer Journey Mapper", layout="wide")
-st.title("🧠 AI-Driven Multi-Touchpoint Customer Journey Dashboard")
+# -------------------------------------------------
+# APP CONFIG
+# -------------------------------------------------
+st.set_page_config(page_title="AI-Driven Customer Journey Dashboard", layout="wide")
+st.title("🧠 Smart AI-Driven Customer Journey Dashboard")
 st.write("""
-This enhanced app merges data from **Website**, **Mobile App**, and **Physical Store** 
-into one unified customer journey. You can explore, filter, and download the merged insights.
+Upload data from **Website**, **Mobile App**, and **Physical Store**.  
+The app will automatically clean, merge, and analyze customer journeys across all touchpoints.
 """)
 
-# -----------------------------
-# FILE UPLOAD SECTION
-# -----------------------------
-st.sidebar.header("📂 Upload Your CSV Files")
-web_file = st.sidebar.file_uploader("Upload Website Data", type="csv")
-app_file = st.sidebar.file_uploader("Upload Mobile App Data", type="csv")
-store_file = st.sidebar.file_uploader("Upload Store Data", type="csv")
+# -------------------------------------------------
+# FUNCTIONS
+# -------------------------------------------------
+def read_data(file, source):
+    try:
+        if file.name.endswith((".xls", ".xlsx")):
+            df = pd.read_excel(file)
+        else:
+            df = pd.read_csv(file, encoding="utf-8", sep=None, engine="python")
+        df["Source"] = source
+        return df
+    except Exception as e:
+        st.error(f"❌ Error reading {source} data: {e}")
+        return pd.DataFrame()
 
-if not (web_file or app_file or store_file):
-    st.info("👈 Upload at least one CSV file to get started.")
+def detect_columns(df):
+    cols = [c.lower() for c in df.columns]
+    mapping = {}
+    for col in df.columns:
+        l = col.lower()
+        if any(x in l for x in ["cust", "id", "user"]):
+            mapping["CustomerID"] = col
+        elif any(x in l for x in ["time", "date"]):
+            mapping["Timestamp"] = col
+        elif any(x in l for x in ["activity", "action", "event"]):
+            mapping["Activity"] = col
+    return mapping
+
+def clean_and_standardize(df, mapping):
+    df = df.rename(columns=mapping)
+    for col in ["CustomerID", "Timestamp", "Activity"]:
+        if col not in df.columns:
+            df[col] = None
+    df["CustomerID"] = df["CustomerID"].astype(str).str.strip()
+    df["Activity"] = df["Activity"].astype(str).str.strip()
+    df["Timestamp"] = pd.to_datetime(df["Timestamp"], errors="coerce")
+    return df.dropna(subset=["CustomerID"])
+
+# -------------------------------------------------
+# UPLOAD FILES
+# -------------------------------------------------
+st.sidebar.header("📂 Upload Files")
+web = st.sidebar.file_uploader("Upload Website Data", type=["csv", "xls", "xlsx"])
+app = st.sidebar.file_uploader("Upload Mobile App Data", type=["csv", "xls", "xlsx"])
+store = st.sidebar.file_uploader("Upload Store Data", type=["csv", "xls", "xlsx"])
+
+if not (web or app or store):
+    st.info("👈 Upload at least one CSV or Excel file to begin.")
     st.stop()
 
-# -----------------------------
-# LOAD & LABEL FUNCTION
-# -----------------------------
-def load_data(file, source):
-    df = pd.read_csv(file)
-    df["Source"] = source
-    return df
+# -------------------------------------------------
+# LOAD & CLEAN DATA
+# -------------------------------------------------
+dfs = []
+for f, name in [(web, "Website"), (app, "Mobile App"), (store, "Store")]:
+    if f:
+        raw_df = read_data(f, name)
+        if not raw_df.empty:
+            mapping = detect_columns(raw_df)
+            cleaned = clean_and_standardize(raw_df, mapping)
+            dfs.append(cleaned)
 
-dataframes = []
-if web_file:
-    dataframes.append(load_data(web_file, "Website"))
-if app_file:
-    dataframes.append(load_data(app_file, "Mobile App"))
-if store_file:
-    dataframes.append(load_data(store_file, "Store"))
+if not dfs:
+    st.error("No valid files could be read.")
+    st.stop()
 
-# -----------------------------
-# MERGE & CLEAN DATA
-# -----------------------------
-combined_df = pd.concat(dataframes, ignore_index=True)
-if "Timestamp" in combined_df.columns:
-    combined_df["Timestamp"] = pd.to_datetime(combined_df["Timestamp"], errors="coerce")
-else:
-    st.warning("⚠️ Missing 'Timestamp' column; timeline features may not work properly.")
+combined = pd.concat(dfs, ignore_index=True)
+combined = combined.drop_duplicates()
 
-# -----------------------------
-# FILTER SECTION
-# -----------------------------
-st.sidebar.header("⚙️ Filters")
-
-# Date range filter (if Timestamp exists)
-if "Timestamp" in combined_df.columns:
-    min_date = combined_df["Timestamp"].min()
-    max_date = combined_df["Timestamp"].max()
-    date_range = st.sidebar.date_input("Select Date Range", [min_date, max_date])
+# -------------------------------------------------
+# FILTERS
+# -------------------------------------------------
+st.sidebar.header("🔎 Filters")
+if "Timestamp" in combined.columns and combined["Timestamp"].notna().any():
+    min_date, max_date = combined["Timestamp"].min(), combined["Timestamp"].max()
+    date_range = st.sidebar.date_input("Date range", [min_date.date(), max_date.date()])
     if len(date_range) == 2:
-        start_date, end_date = pd.to_datetime(date_range[0]), pd.to_datetime(date_range[1])
-        combined_df = combined_df[(combined_df["Timestamp"] >= start_date) & (combined_df["Timestamp"] <= end_date)]
+        start, end = pd.to_datetime(date_range[0]), pd.to_datetime(date_range[1])
+        combined = combined[(combined["Timestamp"] >= start) & (combined["Timestamp"] <= end)]
 
-# Touchpoint filter
-selected_sources = st.sidebar.multiselect(
-    "Select Touchpoints", options=combined_df["Source"].unique(), default=list(combined_df["Source"].unique())
-)
-combined_df = combined_df[combined_df["Source"].isin(selected_sources)]
+sources = sorted(combined["Source"].unique())
+selected_sources = st.sidebar.multiselect("Select Touchpoints", sources, default=sources)
+combined = combined[combined["Source"].isin(selected_sources)]
 
-# -----------------------------
-# MAIN DASHBOARD DISPLAY
-# -----------------------------
-st.subheader("📊 Unified Customer Journey Data")
-st.dataframe(combined_df)
+# -------------------------------------------------
+# DASHBOARD
+# -------------------------------------------------
+st.subheader("📊 Combined Customer Journey Data")
+st.dataframe(combined)
 
 col1, col2, col3 = st.columns(3)
+col1.metric("🧍 Unique Customers", combined["CustomerID"].nunique())
+col2.metric("📋 Total Records", len(combined))
+if "Timestamp" in combined.columns and combined["Timestamp"].notna().any():
+    col3.metric("🕒 Time Range", f"{combined['Timestamp'].min().date()} → {combined['Timestamp'].max().date()}")
 
-with col1:
-    st.metric("🧍 Total Customers", combined_df["CustomerID"].nunique() if "CustomerID" in combined_df.columns else "N/A")
+st.markdown("---")
+st.subheader("📈 Touchpoint Summary")
+source_counts = combined["Source"].value_counts()
+st.bar_chart(source_counts)
 
-with col2:
-    st.metric("📋 Total Records", len(combined_df))
+# -------------------------------------------------
+# CUSTOMER JOURNEY VIEW
+# -------------------------------------------------
+st.markdown("---")
+st.subheader("🕵️ View Individual Customer Journey")
 
-with col3:
-    st.metric("🕒 Date Range", f"{combined_df['Timestamp'].min().date()} → {combined_df['Timestamp'].max().date()}" if "Timestamp" in combined_df.columns else "N/A")
-
-# -----------------------------
-# VISUAL SUMMARIES
-# -----------------------------
-st.subheader("📈 Journey Insights by Touchpoint")
-source_counts = combined_df["Source"].value_counts()
-
-colA, colB = st.columns(2)
-with colA:
-    st.bar_chart(source_counts)
-with colB:
-    st.write("**Proportion of Records by Touchpoint**")
-    st.dataframe(source_counts.reset_index().rename(columns={"index": "Source", "Source": "Total"}))
-
-# -----------------------------
-# CUSTOMER JOURNEY TIMELINE
-# -----------------------------
-if "CustomerID" in combined_df.columns and "Timestamp" in combined_df.columns:
-    st.subheader("🕵️ View Individual Customer Journey")
-
-    sorted_df = combined_df.sort_values(by=["CustomerID", "Timestamp"])
-    selected_customer = st.selectbox("Select Customer ID", sorted_df["CustomerID"].unique())
-
-    customer_journey = sorted_df[sorted_df["CustomerID"] == selected_customer]
+if "CustomerID" in combined.columns:
+    customers = sorted(combined["CustomerID"].unique())
+    selected_customer = st.selectbox("Select Customer ID", customers)
+    journey = combined[combined["CustomerID"] == selected_customer].sort_values("Timestamp")
     st.write(f"### Journey for Customer {selected_customer}")
-    st.table(customer_journey[["Timestamp", "Activity", "Source"]])
+    st.table(journey[["Timestamp", "Activity", "Source"]])
 else:
-    st.warning("⚠️ Please ensure your CSVs include 'CustomerID' and 'Timestamp' columns.")
+    st.warning("No CustomerID column detected.")
 
-# -----------------------------
-# DOWNLOAD SECTION
-# -----------------------------
-st.subheader("💾 Download Combined Dataset")
-csv = combined_df.to_csv(index=False).encode("utf-8")
-st.download_button(
-    label="Download Combined Data as CSV",
-    data=csv,
-    file_name="combined_customer_journey.csv",
-    mime="text/csv"
-)
+# -------------------------------------------------
+# SIMPLE AI INSIGHT (Simulated)
+# -------------------------------------------------
+st.markdown("---")
+st.subheader("🤖 AI Insight Simulation")
+if "Activity" in combined.columns:
+    most_common = combined.groupby("Source")["Activity"].agg(lambda x: x.value_counts().index[0] if not x.empty else "N/A")
+    st.write("**Most Common Activity per Touchpoint:**")
+    st.table(most_common.reset_index().rename(columns={"Activity": "Most Common Activity"}))
 
-# -----------------------------
-# FOOTER
-# -----------------------------
+    st.info("🧠 Insight: The most frequent activities help identify where customers spend most time or attention.")
+else:
+    st.warning("No 'Activity' column found to analyze patterns.")
+
+# -------------------------------------------------
+# DOWNLOAD
+# -------------------------------------------------
+st.markdown("---")
+st.subheader("💾 Download Cleaned Combined Data")
+csv = combined.to_csv(index=False).encode("utf-8")
+st.download_button("Download Combined CSV", csv, "cleaned_customer_journey.csv", "text/csv")
+
 st.markdown("""
 ---
-✅ **Objective 2 Achieved:**  
-This dashboard integrates customer data from multiple touchpoints, provides filters, summaries, 
-and allows interactive exploration with export options.  
+✅ **Objective 2 Achieved (Upgraded Version):**
+- Automatic data cleaning and merging  
+- Interactive filters and analytics  
+- Per-customer journey exploration  
+- Basic AI insights for marketing decisions  
 """)
