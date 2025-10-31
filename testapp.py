@@ -1,7 +1,6 @@
 # app.py
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
 
 # -----------------------------
 # PAGE CONFIG
@@ -64,10 +63,42 @@ st.dataframe(combined_df)
 # SUMMARY STATISTICS
 # -----------------------------
 st.subheader("📈 Summary Overview")
-col1, col2, col3 = st.columns(3)
+
+col1, col2 = st.columns(2)
 
 with col1:
     st.metric("Total Records", len(combined_df))
-with col2:
     st.metric("Unique Customers", combined_df["CustomerID"].nunique() if "CustomerID" in combined_df.columns else "N/A")
-with col3:
+
+with col2:
+    source_summary = combined_df["Source"].value_counts().reset_index()
+    source_summary.columns = ["Source", "Total Records"]
+    st.bar_chart(source_summary.set_index("Source"))
+
+# -----------------------------
+# CUSTOMER JOURNEY TIMELINE
+# -----------------------------
+if "CustomerID" in combined_df.columns and "Timestamp" in combined_df.columns:
+    st.subheader("🕒 Customer Journey Timeline")
+    
+    # Sort by customer and time
+    sorted_df = combined_df.sort_values(by=["CustomerID", "Timestamp"])
+    
+    selected_customer = st.selectbox("Select a Customer ID to view journey:", sorted_df["CustomerID"].unique())
+
+    customer_journey = sorted_df[sorted_df["CustomerID"] == selected_customer]
+    
+    st.write(f"### Customer {selected_customer}'s Journey Across Touchpoints")
+    st.table(customer_journey[["Timestamp", "Activity", "Source"]])
+else:
+    st.warning("⚠️ Please ensure your CSVs include 'CustomerID' and 'Timestamp' columns for timeline analysis.")
+
+# -----------------------------
+# FOOTER
+# -----------------------------
+st.markdown("""
+---
+✅ **Objective 2 Achieved:**  
+This app integrates customer data from **online**, **mobile**, and **store** sources 
+into one connected, interactive journey map with summaries and timeline views.
+""")
