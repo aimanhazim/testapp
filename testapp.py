@@ -2,54 +2,103 @@
 import streamlit as st
 import pandas as pd
 
-st.set_page_config(page_title="Simple Customer Journey Mapper")
+# -----------------------------
+# PAGE CONFIG
+# -----------------------------
+st.set_page_config(page_title="AI-Driven Customer Journey Mapper", layout="wide")
 
-st.title("🧠 Simple AI-Driven Customer Journey Mapper")
-st.write("Combine customer data from website, app, and store into one connected journey map.")
+st.title("🧠 AI-Driven Multi-Touchpoint Customer Journey Mapper")
+st.write("""
+This upgraded version combines customer data from **web**, **mobile app**, and **physical store**
+into a single connected journey map with basic analytics and visual insights.
+""")
 
-# Sidebar upload
-st.sidebar.header("📂 Upload CSV Files")
+# -----------------------------
+# FILE UPLOAD SECTION
+# -----------------------------
+st.sidebar.header("📂 Upload Your Datasets")
+web_file = st.sidebar.file_uploader("Upload Website Data (CSV)", type="csv")
+app_file = st.sidebar.file_uploader("Upload Mobile App Data (CSV)", type="csv")
+store_file = st.sidebar.file_uploader("Upload Physical Store Data (CSV)", type="csv")
 
-web_file = st.sidebar.file_uploader("Upload Website Data", type="csv")
-app_file = st.sidebar.file_uploader("Upload App Data", type="csv")
-store_file = st.sidebar.file_uploader("Upload Store Data", type="csv")
-
-# If no files uploaded
+# -----------------------------
+# CHECK FILES
+# -----------------------------
 if not (web_file or app_file or store_file):
-    st.info("👈 Please upload at least one CSV file to get started.")
+    st.info("👈 Please upload at least one CSV file to begin.")
     st.stop()
 
-# Helper function
+# -----------------------------
+# LOAD FUNCTION
+# -----------------------------
 def load_data(file, source):
     df = pd.read_csv(file)
     df["Source"] = source
     return df
 
-# Combine all uploaded data
-data_frames = []
-
+# -----------------------------
+# COMBINE FILES
+# -----------------------------
+dataframes = []
 if web_file:
-    data_frames.append(load_data(web_file, "Website"))
-
+    dataframes.append(load_data(web_file, "Website"))
 if app_file:
-    data_frames.append(load_data(app_file, "Mobile App"))
-
+    dataframes.append(load_data(app_file, "Mobile App"))
 if store_file:
-    data_frames.append(load_data(store_file, "Store"))
+    dataframes.append(load_data(store_file, "Store"))
 
-combined = pd.concat(data_frames, ignore_index=True)
+combined_df = pd.concat(dataframes, ignore_index=True)
 
+# Ensure Timestamp exists and convert it
+if "Timestamp" in combined_df.columns:
+    combined_df["Timestamp"] = pd.to_datetime(combined_df["Timestamp"], errors="coerce")
+
+# -----------------------------
+# DISPLAY DATA
+# -----------------------------
 st.subheader("📊 Unified Customer Journey Data")
-st.dataframe(combined)
+st.dataframe(combined_df)
 
-# Simple summary
-st.subheader("📈 Summary by Source")
-summary = combined["Source"].value_counts().reset_index()
-summary.columns = ["Source", "Total Records"]
-st.table(summary)
+# -----------------------------
+# SUMMARY STATISTICS
+# -----------------------------
+st.subheader("📈 Summary Overview")
 
+col1, col2 = st.columns(2)
+
+with col1:
+    st.metric("Total Records", len(combined_df))
+    st.metric("Unique Customers", combined_df["CustomerID"].nunique() if "CustomerID" in combined_df.columns else "N/A")
+
+with col2:
+    source_summary = combined_df["Source"].value_counts().reset_index()
+    source_summary.columns = ["Source", "Total Records"]
+    st.bar_chart(source_summary.set_index("Source"))
+
+# -----------------------------
+# CUSTOMER JOURNEY TIMELINE
+# -----------------------------
+if "CustomerID" in combined_df.columns and "Timestamp" in combined_df.columns:
+    st.subheader("🕒 Customer Journey Timeline")
+    
+    # Sort by customer and time
+    sorted_df = combined_df.sort_values(by=["CustomerID", "Timestamp"])
+    
+    selected_customer = st.selectbox("Select a Customer ID to view journey:", sorted_df["CustomerID"].unique())
+
+    customer_journey = sorted_df[sorted_df["CustomerID"] == selected_customer]
+    
+    st.write(f"### Customer {selected_customer}'s Journey Across Touchpoints")
+    st.table(customer_journey[["Timestamp", "Activity", "Source"]])
+else:
+    st.warning("⚠️ Please ensure your CSVs include 'CustomerID' and 'Timestamp' columns for timeline analysis.")
+
+# -----------------------------
+# FOOTER
+# -----------------------------
 st.markdown("""
 ---
 ✅ **Objective 2 Achieved:**  
-This simple app integrates customer data from multiple touchpoints into one connected journey view.
+This app integrates customer data from **online**, **mobile**, and **store** sources 
+into one connected, interactive journey map with summaries and timeline views.
 """)
