@@ -1,92 +1,55 @@
 # app.py
 import streamlit as st
 import pandas as pd
-import plotly.express as px
 
-# -----------------------------
-# PAGE CONFIGURATION
-# -----------------------------
-st.set_page_config(page_title="AI-Driven Customer Journey Mapper", layout="wide")
+st.set_page_config(page_title="Simple Customer Journey Mapper")
 
-st.title("🧠 AI-Driven Multi-Touchpoint Customer Journey Mapper")
-st.write("""
-This demo application integrates data from **online browsing**, **mobile app usage**, 
-and **physical store visits** into a unified view of the customer journey.
-""")
+st.title("🧠 Simple AI-Driven Customer Journey Mapper")
+st.write("Combine customer data from website, app, and store into one connected journey map.")
 
-# -----------------------------
-# DATA INPUT SECTION
-# -----------------------------
-st.sidebar.header("📂 Upload or Input Data")
+# Sidebar upload
+st.sidebar.header("📂 Upload CSV Files")
 
-uploaded_web = st.sidebar.file_uploader("Upload Website Data (CSV)", type="csv")
-uploaded_app = st.sidebar.file_uploader("Upload Mobile App Data (CSV)", type="csv")
-uploaded_store = st.sidebar.file_uploader("Upload Physical Store Data (CSV)", type="csv")
+web_file = st.sidebar.file_uploader("Upload Website Data", type="csv")
+app_file = st.sidebar.file_uploader("Upload App Data", type="csv")
+store_file = st.sidebar.file_uploader("Upload Store Data", type="csv")
 
-# If no files uploaded, show a message
-if not uploaded_web and not uploaded_app and not uploaded_store:
-    st.info("👈 Please upload at least one dataset to begin.")
+# If no files uploaded
+if not (web_file or app_file or store_file):
+    st.info("👈 Please upload at least one CSV file to get started.")
     st.stop()
 
-# -----------------------------
-# READ AND LABEL DATA
-# -----------------------------
-def load_and_label(data, source_name):
-    df = pd.read_csv(data)
-    df["Source"] = source_name
+# Helper function
+def load_data(file, source):
+    df = pd.read_csv(file)
+    df["Source"] = source
     return df
 
-dataframes = []
+# Combine all uploaded data
+data_frames = []
 
-if uploaded_web:
-    web_df = load_and_label(uploaded_web, "Website")
-    dataframes.append(web_df)
+if web_file:
+    data_frames.append(load_data(web_file, "Website"))
 
-if uploaded_app:
-    app_df = load_and_label(uploaded_app, "Mobile App")
-    dataframes.append(app_df)
+if app_file:
+    data_frames.append(load_data(app_file, "Mobile App"))
 
-if uploaded_store:
-    store_df = load_and_label(uploaded_store, "Store")
-    dataframes.append(store_df)
+if store_file:
+    data_frames.append(load_data(store_file, "Store"))
 
-# -----------------------------
-# MERGE ALL DATA
-# -----------------------------
-if dataframes:
-    combined_df = pd.concat(dataframes, ignore_index=True)
+combined = pd.concat(data_frames, ignore_index=True)
 
-    st.subheader("📊 Unified Customer Journey Data")
-    st.dataframe(combined_df.head())
+st.subheader("📊 Unified Customer Journey Data")
+st.dataframe(combined)
 
-    # -----------------------------
-    # SIMPLE VISUALIZATION
-    # -----------------------------
-    if "CustomerID" in combined_df.columns and "Timestamp" in combined_df.columns:
-        st.subheader("🔍 Customer Journey Overview")
+# Simple summary
+st.subheader("📈 Summary by Source")
+summary = combined["Source"].value_counts().reset_index()
+summary.columns = ["Source", "Total Records"]
+st.table(summary)
 
-        # Sort data for timeline visualization
-        combined_df["Timestamp"] = pd.to_datetime(combined_df["Timestamp"], errors="coerce")
-        combined_df = combined_df.sort_values(by=["CustomerID", "Timestamp"])
-
-        fig = px.scatter(
-            combined_df,
-            x="Timestamp",
-            y="CustomerID",
-            color="Source",
-            title="Customer Journey Across Touchpoints",
-            labels={"Source": "Touchpoint", "CustomerID": "Customer ID"}
-        )
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.warning("⚠️ Please ensure your CSV files include 'CustomerID' and 'Timestamp' columns for visualization.")
-
-# -----------------------------
-# FOOTER
-# -----------------------------
 st.markdown("""
 ---
 ✅ **Objective 2 Achieved:**  
-This simple app demonstrates how customer data from **web**, **mobile**, and **store** sources 
-can be integrated into one connected customer journey map through an interactive interface.
+This simple app integrates customer data from multiple touchpoints into one connected journey view.
 """)
