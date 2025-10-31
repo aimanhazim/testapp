@@ -1,207 +1,161 @@
 # app.py
 import streamlit as st
 import pandas as pd
-import io
-import csv
 from datetime import datetime
 
-st.set_page_config(page_title="Robust Customer Journey Mapper", layout="wide")
-st.title("🧰 Robust Customer Journey Mapper (Upload + Map Columns)")
-
+# -------------------------------------------------
+# APP CONFIG
+# -------------------------------------------------
+st.set_page_config(page_title="AI-Driven Customer Journey Dashboard", layout="wide")
+st.title("🧠 Smart AI-Driven Customer Journey Dashboard")
 st.write("""
-Upload CSV or Excel files from Website, Mobile App, and Store.
-This app will try to read different encodings/delimiters and lets you map columns if headers differ.
+Upload data from **Website**, **Mobile App**, and **Physical Store**.  
+The app will automatically clean, merge, and analyze customer journeys across all touchpoints.
 """)
 
-# -------------------------
-# Helpers: Robust CSV/Excel reader
-# -------------------------
-def detect_delimiter(sample_bytes):
-    """
-    Use csv.Sniffer to guess delimiter from sample bytes (decoded to text).
-    """
+# -------------------------------------------------
+# FUNCTIONS
+# -------------------------------------------------
+def read_data(file, source):
     try:
-        text = sample_bytes.decode("utf-8")
-    except Exception:
-        try:
-            text = sample_bytes.decode("latin1")
-        except Exception:
-            return ","
-    try:
-        sniffer = csv.Sniffer()
-        dialect = sniffer.sniff(text[:4096])
-        return dialect.delimiter
-    except Exception:
-        # fallback try common delimiters
-        for d in [",", ";", "\t", "|"]:
-            if d in text:
-                return d
-        return ","
+        if file.name.endswith((".xls", ".xlsx")):
+            df = pd.read_excel(file)
+        else:
+            df = pd.read_csv(file, encoding="utf-8", sep=None, engine="python")
+        df["Source"] = source
+        return df
+    except Exception as e:
+        st.error(f"❌ Error reading {source} data: {e}")
+        return pd.DataFrame()
 
-def try_read_table(uploaded_file):
-    """
-    Try reading uploaded file robustly. Returns DataFrame or (None, error_msg).
-    """
-    name = uploaded_file.name.lower()
-    data_bytes = uploaded_file.read()
-    uploaded_file.seek(0)  # reset for further reads by streamlit
+def detect_columns(df):
+    cols = [c.lower() for c in df.columns]
+    mapping = {}
+    for col in df.columns:
+        l = col.lower()
+        if any(x in l for x in ["cust", "id", "user"]):
+            mapping["CustomerID"] = col
+        elif any(x in l for x in ["time", "date"]):
+            mapping["Timestamp"] = col
+        elif any(x in l for x in ["activity", "action", "event"]):
+            mapping["Activity"] = col
+    return mapping
 
-    # If Excel
-    if name.endswith((".xls", ".xlsx")):
-        try:
-            df = pd.read_excel(io.BytesIO(data_bytes))
-            return df, None
-        except Exception as e:
-            return None, f"Excel read error: {e}"
-
-    # Otherwise assume text (CSV-like). Try detection and multiple encodings.
-    # Detect delimiter using a sample
-    delim = detect_delimiter(data_bytes[:10000])
-    # Try encodings
-    for enc in ("utf-8", "latin1", "cp1252"):
-        try:
-            text_io = io.StringIO(data_bytes.decode(enc))
-            df = pd.read_csv(text_io, sep=delim, engine="python")
-            return df, None
-        except Exception as e:
-            # try pandas auto-detect separators as last resort
-            try:
-                df = pd.read_csv(io.StringIO(data_bytes.decode(enc)))
-                return df, None
-            except Exception:
-                last_err = e
-                continue
-    return None, f"Failed to parse file. Last error: {last_err}"
-
-# -------------------------
-# Upload UI
-# -------------------------
-st.sidebar.header("Upload files")
-web_file = st.sidebar.file_uploader("Website data (CSV / XLSX)", type=["csv", "xls", "xlsx"])
-app_file = st.sidebar.file_uploader("Mobile app data (CSV / XLSX)", type=["csv", "xls", "xlsx"])
-store_file = st.sidebar.file_uploader("Store data (CSV / XLSX)", type=["csv", "xls", "xlsx"])
-
-if not (web_file or app_file or store_file):
-    st.info("Please upload at least one file (website / app / store).")
-    st.stop()
-
-# -------------------------
-# Read each uploaded file and preview
-# -------------------------
-uploaded_items = []
-for f, label in [(web_file, "Website"), (app_file, "Mobile App"), (store_file, "Store")]:
-    if f:
-        with st.expander(f"Preview: {label} - {f.name}", expanded=True):
-            df, err = try_read_table(f)
-            if err:
-                st.error(f"Could not read {f.name}: {err}")
-                st.write("Try opening the file in Excel and saving as CSV (comma) with UTF-8 encoding.")
-                st.stop()
-            else:
-                st.success(f"Successfully read {f.name} (rows: {len(df)})")
-                st.dataframe(df.head(10))
-                uploaded_items.append((label, df.copy(), f.name))
-
-# -------------------------
-# Column mapping UI (for each uploaded dataset)
-# -------------------------
-st.sidebar.header("Column mapping (required)")
-mapped_frames = []
-required_cols = {"CustomerID": None, "Timestamp": None, "Activity": None}
-for (label, df, fname) in uploaded_items:
-    st.sidebar.subheader(f"Map columns for: {label} ({fname})")
-    cols = list(df.columns)
-    # lower-case display but store original names
-    cust = st.sidebar.selectbox(f"{label}: Customer ID column", ["--Select--"] + cols, key=f"{label}_cust")
-    ts = st.sidebar.selectbox(f"{label}: Timestamp column", ["--Select--"] + cols, key=f"{label}_ts")
-    act = st.sidebar.selectbox(f"{label}: Activity column", ["--Select--"] + cols, key=f"{label}_act")
-    # Validation
-    if cust == "--Select--" or ts == "--Select--" or act == "--Select--":
-        st.sidebar.warning(f"Please map all three columns for {label}.")
-        st.stop()
-    # Rename columns in a copy
-    df2 = df.rename(columns={cust: "CustomerID", ts: "Timestamp", act: "Activity"})
-    mapped_frames.append((label, df2))
-
-# -------------------------
-# Standardize and merge
-# -------------------------
-def standardize_df(df, source_label):
-    # ensure columns exist
-    if "CustomerID" not in df.columns or "Timestamp" not in df.columns or "Activity" not in df.columns:
-        raise ValueError("Required columns missing after mapping.")
-    # convert Timestamp
-    df["Source"] = source_label
-    # Try to parse timestamp to datetime
-    df["Timestamp"] = pd.to_datetime(df["Timestamp"], errors="coerce")
-    # Trim whitespace from CustomerID and Activity
+def clean_and_standardize(df, mapping):
+    df = df.rename(columns=mapping)
+    for col in ["CustomerID", "Timestamp", "Activity"]:
+        if col not in df.columns:
+            df[col] = None
     df["CustomerID"] = df["CustomerID"].astype(str).str.strip()
     df["Activity"] = df["Activity"].astype(str).str.strip()
-    return df
+    df["Timestamp"] = pd.to_datetime(df["Timestamp"], errors="coerce")
+    return df.dropna(subset=["CustomerID"])
 
-clean_frames = []
-for label, df in mapped_frames:
-    try:
-        dfc = standardize_df(df, label)
-        clean_frames.append(dfc)
-    except Exception as e:
-        st.error(f"Error standardizing {label}: {e}")
-        st.stop()
+# -------------------------------------------------
+# UPLOAD FILES
+# -------------------------------------------------
+st.sidebar.header("📂 Upload Files")
+web = st.sidebar.file_uploader("Upload Website Data", type=["csv", "xls", "xlsx"])
+app = st.sidebar.file_uploader("Upload Mobile App Data", type=["csv", "xls", "xlsx"])
+store = st.sidebar.file_uploader("Upload Store Data", type=["csv", "xls", "xlsx"])
 
-if not clean_frames:
-    st.error("No valid dataframes after mapping.")
+if not (web or app or store):
+    st.info("👈 Upload at least one CSV or Excel file to begin.")
     st.stop()
 
-combined = pd.concat(clean_frames, ignore_index=True)
+# -------------------------------------------------
+# LOAD & CLEAN DATA
+# -------------------------------------------------
+dfs = []
+for f, name in [(web, "Website"), (app, "Mobile App"), (store, "Store")]:
+    if f:
+        raw_df = read_data(f, name)
+        if not raw_df.empty:
+            mapping = detect_columns(raw_df)
+            cleaned = clean_and_standardize(raw_df, mapping)
+            dfs.append(cleaned)
 
-st.subheader("🔗 Combined Data (first 50 rows)")
-st.dataframe(combined.head(50))
+if not dfs:
+    st.error("No valid files could be read.")
+    st.stop()
 
-# -------------------------
-# Quick validation & helpful warnings
-# -------------------------
-if combined["Timestamp"].isna().all():
-    st.warning("All timestamps failed to parse into datetime. Check formats (e.g., 'YYYY-MM-DD HH:MM').")
-else:
-    n_na = combined["Timestamp"].isna().sum()
-    if n_na > 0:
-        st.warning(f"{n_na} rows have missing/unparsed Timestamps.")
+combined = pd.concat(dfs, ignore_index=True)
+combined = combined.drop_duplicates()
 
-# -------------------------
-# Simple interactive exploration
-# -------------------------
-st.subheader("🔎 Explore")
+# -------------------------------------------------
+# FILTERS
+# -------------------------------------------------
+st.sidebar.header("🔎 Filters")
+if "Timestamp" in combined.columns and combined["Timestamp"].notna().any():
+    min_date, max_date = combined["Timestamp"].min(), combined["Timestamp"].max()
+    date_range = st.sidebar.date_input("Date range", [min_date.date(), max_date.date()])
+    if len(date_range) == 2:
+        start, end = pd.to_datetime(date_range[0]), pd.to_datetime(date_range[1])
+        combined = combined[(combined["Timestamp"] >= start) & (combined["Timestamp"] <= end)]
 
-# Filters
-unique_customers = combined["CustomerID"].unique().tolist()
-selected_customer = st.selectbox("Select CustomerID (or All)", ["All"] + unique_customers)
+sources = sorted(combined["Source"].unique())
+selected_sources = st.sidebar.multiselect("Select Touchpoints", sources, default=sources)
+combined = combined[combined["Source"].isin(selected_sources)]
 
-min_ts = combined["Timestamp"].min()
-max_ts = combined["Timestamp"].max()
-if pd.notna(min_ts) and pd.notna(max_ts):
-    date_range = st.date_input("Date range", [min_ts.date(), max_ts.date()])
-else:
-    date_range = None
+# -------------------------------------------------
+# DASHBOARD
+# -------------------------------------------------
+st.subheader("📊 Combined Customer Journey Data")
+st.dataframe(combined)
 
-df_view = combined.copy()
-if selected_customer != "All":
-    df_view = df_view[df_view["CustomerID"] == selected_customer]
-if date_range and len(date_range) == 2 and pd.notna(min_ts):
-    start = pd.to_datetime(date_range[0])
-    end = pd.to_datetime(date_range[1]) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
-    df_view = df_view[(df_view["Timestamp"] >= start) & (df_view["Timestamp"] <= end)]
-
-st.write(f"Showing {len(df_view)} records")
-st.dataframe(df_view.sort_values(by=["CustomerID", "Timestamp"]).reset_index(drop=True))
-
-# -------------------------
-# Simple stats
-# -------------------------
-st.subheader("📈 Summary")
-col_count = df_view["Source"].value_counts().reset_index().rename(columns={"index": "Source", "Source": "Count"})
-st.table(col_count)
+col1, col2, col3 = st.columns(3)
+col1.metric("🧍 Unique Customers", combined["CustomerID"].nunique())
+col2.metric("📋 Total Records", len(combined))
+if "Timestamp" in combined.columns and combined["Timestamp"].notna().any():
+    col3.metric("🕒 Time Range", f"{combined['Timestamp'].min().date()} → {combined['Timestamp'].max().date()}")
 
 st.markdown("---")
-st.write("✅ You can now download the cleaned combined dataset below.")
+st.subheader("📈 Touchpoint Summary")
+source_counts = combined["Source"].value_counts()
+st.bar_chart(source_counts)
+
+# -------------------------------------------------
+# CUSTOMER JOURNEY VIEW
+# -------------------------------------------------
+st.markdown("---")
+st.subheader("🕵️ View Individual Customer Journey")
+
+if "CustomerID" in combined.columns:
+    customers = sorted(combined["CustomerID"].unique())
+    selected_customer = st.selectbox("Select Customer ID", customers)
+    journey = combined[combined["CustomerID"] == selected_customer].sort_values("Timestamp")
+    st.write(f"### Journey for Customer {selected_customer}")
+    st.table(journey[["Timestamp", "Activity", "Source"]])
+else:
+    st.warning("No CustomerID column detected.")
+
+# -------------------------------------------------
+# SIMPLE AI INSIGHT (Simulated)
+# -------------------------------------------------
+st.markdown("---")
+st.subheader("🤖 AI Insight Simulation")
+if "Activity" in combined.columns:
+    most_common = combined.groupby("Source")["Activity"].agg(lambda x: x.value_counts().index[0] if not x.empty else "N/A")
+    st.write("**Most Common Activity per Touchpoint:**")
+    st.table(most_common.reset_index().rename(columns={"Activity": "Most Common Activity"}))
+
+    st.info("🧠 Insight: The most frequent activities help identify where customers spend most time or attention.")
+else:
+    st.warning("No 'Activity' column found to analyze patterns.")
+
+# -------------------------------------------------
+# DOWNLOAD
+# -------------------------------------------------
+st.markdown("---")
+st.subheader("💾 Download Cleaned Combined Data")
 csv = combined.to_csv(index=False).encode("utf-8")
-st.download_button("Download combined CSV", csv, "combined_customer_journey.csv", "text/csv")
+st.download_button("Download Combined CSV", csv, "cleaned_customer_journey.csv", "text/csv")
+
+st.markdown("""
+---
+✅ **Objective 2 Achieved (Upgraded Version):**
+- Automatic data cleaning and merging  
+- Interactive filters and analytics  
+- Per-customer journey exploration  
+- Basic AI insights for marketing decisions  
+""")
